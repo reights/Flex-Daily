@@ -1,0 +1,57 @@
+name: Build and deploy FlexDaily (SmarterASP.NET)
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Restore
+        run: dotnet restore FlexDaily.csproj
+      - name: Build
+        run: dotnet build FlexDaily.csproj --configuration Release --no-restore
+      - name: Publish
+        run: dotnet publish FlexDaily.csproj --configuration Release --no-build --output publish
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flexdaily-site
+          path: publish/wwwroot
+          if-no-files-found: error
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: windows-latest
+    environment: development
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: flexdaily-site
+          path: site
+      - name: Install Web Deploy
+        shell: pwsh
+        run: choco install webdeploy --yes --no-progress
+      - name: Deploy via MSDeploy
+        shell: pwsh
+        env:
+          DEPLOY_USER: ${{ secrets.SMARTERASP_USERNAME }}
+          DEPLOY_PASSWORD: ${{ secrets.SMARTERASP_PASSWORD }}
+        run: |
+          if (-not $env:DEPLOY_USER -or -not $env:DEPLOY_PASSWORD) { throw "Configure SMARTERASP_USERNAME and SMARTERASP_PASSWORD secrets to deploy." }
+          $exe = "${env:ProgramFiles}\IIS\Microsoft Web Deploy V3\msdeploy.exe"
+          if (-not (Test-Path $exe)) { throw "msdeploy.exe not found at $exe" }
+          $site = (Resolve-Path site).Path
+          $endpoint = 'https://win8139.site4now.net:8172/MsDeploy.axd?site=reights-001-site11'
+          & $exe '-verb:sync' "-source:contentPath=$site" "-dest:contentPath=reights-001-site11,computerName=$endpoint,userName=$env:DEPLOY_USER,password=$env:DEPLOY_PASSWORD,authType=Basic" '-enableRule:AppOffline' '-retryAttempts:3'
+          if ($LASTEXITCODE -ne 0) { throw "MSDeploy exited with code $LASTEXITCODE" }
