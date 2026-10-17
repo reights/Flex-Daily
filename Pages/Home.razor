@@ -1,0 +1,55 @@
+@page "/"
+@implements IAsyncDisposable
+@inject Store Db
+@using System.Text.Json
+<PageTitle>FlexDaily</PageTitle>
+<main>
+<header><div><h1>↝ FlexDaily</h1><small>Move better, every day</small></div><small>Offline-first</small></header>
+<nav><button class="@(tab=="today"?"selected":"")" @onclick='()=>tab="today"'>Workout</button><button class="@(tab=="progress"?"selected":"")" @onclick='()=>tab="progress"'>Progress</button><button class="@(tab=="library"?"selected":"")" @onclick='()=>tab="library"'>Exercises</button></nav>
+@if(message!=""){<p class="notice" role="status">@message</p>}
+@if(tab=="today"){
+<div class="stats"><div><strong>@Streak</strong><small>Day streak</small></div><div><strong>@sessions.Count</strong><small>Sessions</small></div><div><strong>@(sessions.Sum(x=>x.Seconds)/60)</strong><small>Total minutes</small></div></div>
+<section class="card"><h2>Generate a routine</h2><label>Focus<select @bind="focus"><option value="hip">Hips &amp; groin</option><option value="back">Lower back</option><option value="legs">Legs</option><option value="full">Full body</option></select></label><label>Duration<select @bind="minutes"><option value="5">5 minutes</option><option value="10">10 minutes</option><option value="15">15 minutes</option><option value="20">20 minutes</option></select></label><div class="checks"><label><input type="checkbox" @bind="avoidKneeling"/> Avoid kneeling</label><label><input type="checkbox" @bind="avoidFloor"/> Avoid floor work</label></div><button class="primary wide" @onclick="Generate">↝ Generate random routine</button></section>
+@if(steps.Count>0){
+<section class="card">
+<div class="row"><small>Exercise @(index+1) / @steps.Count</small><small>@Active.Phase</small></div><h2>@Active.Name</h2>
+<svg class="illustration" viewBox="0 0 360 190" role="img" aria-label="Schematic stretching position"><rect width="360" height="190" fill="#eaf3ef"/><circle cx="180" cy="33" r="15" fill="#dfa980"/><g stroke="#14685e" stroke-width="12" stroke-linecap="round" fill="none"><path d="M180 50L180 108M180 69L140 94M180 69L220 94"/><path d="@Legs"/></g><path d="M40 175H320" stroke="#b5cfc2" stroke-width="2"/><text x="180" y="187" text-anchor="middle" font-size="10" fill="#496c60">@Active.Phase — position guide</text></svg>
+<p>@Active.Instructions</p>
+<div class="timer" role="timer">@Clock(left)</div><p class="muted" style="text-align:center">@(isBreak?"Get ready for next exercise":"Countdown · "+(running?"Running":"Paused / ready"))</p>
+<div class="meter"><div style="width:@(100.0*(steps[index].Exercise.Seconds-Math.Min(left,steps[index].Exercise.Seconds))/Math.Max(1,steps[index].Exercise.Seconds))%"></div></div>
+<div class="controls"><button disabled="@(index==0)" @onclick="()=>Jump(index-1)">← Previous</button><button class="primary" @onclick="Toggle">@(running?"Ⅱ Pause":"▶ Start")</button><button disabled="@(index==steps.Count-1)" @onclick="()=>Jump(index+1)">Next →</button></div>
+<div class="checks"><label><input type="checkbox" @bind="auto"/> Auto-advance</label><label><input type="checkbox" @bind="sound"/> Sound</label></div>
+<label>Transition<select @bind="transition"><option value="0">None</option><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="15">15 seconds</option></select></label>
+</section>
+<section class="card"><div class="row"><h2>Completion checklist</h2><small>@steps.Count(x=>x.Done) / @steps.Count</small></div>
+@for(var i=0;i<steps.Count;i++){var j=i;var s=steps[i];<div class="exercise @(index==j?"highlight":"")"><input type="checkbox" checked="@s.Done" @onchange="e=>Check(j,e.Value is bool b&&b)"/><button @onclick="()=>Jump(j)">@s.Exercise.Name <small>@Clock(s.Exercise.Seconds)</small></button></div>}
+<label>Tightness before: @before / 10<input type="range" min="0" max="10" @bind="before" @bind:event="oninput"/></label>
+<label>Tightness after: @after / 10<input type="range" min="0" max="10" @bind="after" @bind:event="oninput"/></label>
+<button class="primary wide" disabled="@(saved||steps.All(x=>!x.Done))" @onclick="Save">@(saved?"Session saved":"Save completed session")</button></section>}
+}else if(tab=="progress"){
+<section class="card"><h2>Your progress</h2><p>@sessions.Count saved sessions · @(sessions.Sum(x=>x.Seconds)/60) minutes</p><div class="week">@for(int d=6;d>=0;d--){var day=DateTime.Today.AddDays(-d);<div class="@(sessions.Any(x=>x.Date==day.ToString("yyyy-MM-dd"))?"day done":"day")">@day.ToString("ddd")</div>}</div></section>
+<section class="card"><h2>History</h2>@if(sessions.Count==0){<p>No sessions yet.</p>}@foreach(var s in sessions.OrderByDescending(x=>x.Date).Take(30)){<div class="history"><b>@s.Date · @s.Focus</b><span>@(Math.Round(s.Seconds/60.0,1)) min · Tightness @s.Before → @s.After</span></div>}</section>
+<section class="card"><h2>Local data</h2><p>Stored on this device in IndexedDB. Export backups regularly; clearing browser storage deletes progress.</p><button @onclick="Export">Export JSON backup</button> <button class="danger" @onclick="Clear">Delete history</button></section>
+}else{
+<section class="card"><h2>Exercise library</h2><p>Visuals are simplified posture guides. Read instructions for each movement.</p>@foreach(var e in Library.All){<details><summary>@e.Name (@e.Seconds sec)</summary><p>@e.Instructions</p></details>}</section>
+}
+<footer>Stretch gently; stop if you feel sharp pain or hip pinching. Mobile browsers may pause timers when backgrounded. Exercise timing excludes transition breaks.</footer>
+</main>
+@code {
+private string tab="today",focus="hip",message="";private int minutes=15,index,left=60,transition=5,before=5,after=3;private bool avoidKneeling,avoidFloor,auto=true,sound=true,running,isBreak,saved;private List<Step> steps=new();private List<Session> sessions=new();private CancellationTokenSource? cancel;
+private Exercise Active=>steps[index].Exercise;
+private string Legs=>Active.Name switch{"Butterfly stretch"=>"M180 108L117 136L176 149M180 108L243 136L184 149","Glute bridges"=>"M180 108L125 147L92 165M180 108L235 147L268 165","Adductor rock-backs"=>"M180 108L126 152L90 166M180 108L259 151L290 167","Standing hip flexor stretch"=>"M180 108L111 145L85 169M180 108L235 146L264 169",_=>"M180 108L151 169M180 108L212 169"};
+private static string Clock(int n)=>$"{n/60:00}:{n%60:00}";
+private int Streak{get{var dates=sessions.Select(s=>s.Date).ToHashSet();var d=DateTime.Today;if(!dates.Contains(d.ToString("yyyy-MM-dd")))d=d.AddDays(-1);int n=0;while(dates.Contains(d.ToString("yyyy-MM-dd"))){n++;d=d.AddDays(-1);}return n;}}
+protected override async Task OnAfterRenderAsync(bool first){if(!first)return;try{sessions=await Db.Load();}catch{message="IndexedDB unavailable; progress may not save.";}Generate();StateHasChanged();}
+private void Stop(){running=false;cancel?.Cancel();cancel?.Dispose();cancel=null;}
+private void Generate(){Stop();steps=Library.Generate(focus,minutes,avoidKneeling,avoidFloor);index=0;isBreak=false;saved=false;left=steps.Count>0?steps[0].Exercise.Seconds:0;message=steps.Count==0?"No exercises match these settings.":"";}
+private void Jump(int i){if(i<0||i>=steps.Count)return;Stop();index=i;isBreak=false;left=Active.Seconds;}
+private void Check(int i,bool value){steps[i].Done=value;saved=false;}
+private async Task Toggle(){if(running){Stop();return;}if(steps.Count==0)return;running=true;var cts=new CancellationTokenSource();cancel=cts;var token=cts.Token;var deadline=DateTimeOffset.UtcNow.AddSeconds(left);
+try{using var ticker=new PeriodicTimer(TimeSpan.FromMilliseconds(200));while(await ticker.WaitForNextTickAsync(token)){left=Math.Max(0,(int)Math.Ceiling((deadline-DateTimeOffset.UtcNow).TotalSeconds));await InvokeAsync(StateHasChanged);if(left>0)continue;Stop();if(sound)try{await Db.Beep();}catch{}if(isBreak){isBreak=false;index++;left=Active.Seconds;}else{steps[index].Done=true;if(index==steps.Count-1){message="Routine finished. Save your session.";break;}if(!auto){message="Exercise complete. Tap Next to continue.";break;}if(transition>0){isBreak=true;left=transition;}else{index++;left=Active.Seconds;}}await InvokeAsync(StateHasChanged);if(auto)await Toggle();break;}}catch(OperationCanceledException){}catch{Stop();message="Timer stopped unexpectedly.";}}
+private async Task Save(){if(saved||steps.All(x=>!x.Done))return;var selected=steps.Where(x=>x.Done).ToList();var s=new Session{Focus=focus,Seconds=selected.Sum(x=>x.Exercise.Seconds),Before=before,After=after,Exercises=selected.Select(x=>x.Exercise.Name).ToList()};try{await Db.Save(s);sessions.Add(s);saved=true;message="Session saved locally.";}catch{message="Save failed; check browser storage.";}}
+private async Task Export(){try{await Db.Download(JsonSerializer.Serialize(sessions,new JsonSerializerOptions{WriteIndented=true}));message="Backup downloaded.";}catch{message="Export failed.";}}
+private async Task Clear(){try{await Db.Clear();sessions.Clear();message="History deleted.";}catch{message="Delete failed.";}}
+public ValueTask DisposeAsync(){Stop();return ValueTask.CompletedTask;}
+}
