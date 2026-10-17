@@ -31,7 +31,7 @@ jobs:
 
   deploy:
     needs: build
-    if: github.event_name != 'pull_request' && vars.ENABLE_SMARTERASP_DEPLOY == 'true'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: windows-latest
     environment: development
     steps:
@@ -48,7 +48,7 @@ jobs:
           DEPLOY_USER: ${{ secrets.SMARTERASP_USERNAME }}
           DEPLOY_PASSWORD: ${{ secrets.SMARTERASP_PASSWORD }}
         run: |
-          if (-not $env:DEPLOY_USER -or -not $env:DEPLOY_PASSWORD) { throw "Configure SMARTERASP_USERNAME and SMARTERASP_PASSWORD secrets before enabling deployment." }
+          if (-not $env:DEPLOY_USER -or -not $env:DEPLOY_PASSWORD) { throw "Configure SMARTERASP_USERNAME and SMARTERASP_PASSWORD secrets to deploy." }
           $exe = "${env:ProgramFiles}\IIS\Microsoft Web Deploy V3\msdeploy.exe"
           if (-not (Test-Path $exe)) { throw "msdeploy.exe not found at $exe" }
           $site = (Resolve-Path site).Path
